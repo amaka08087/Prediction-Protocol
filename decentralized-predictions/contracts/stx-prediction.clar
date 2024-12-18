@@ -4,6 +4,7 @@
 (define-constant contract-administrator tx-sender)
 (define-constant minimum-stake-amount u100000) ;; Minimum stake amount (100,000 microSTX)
 (define-constant platform-fee-percentage u2) ;; 2% platform fee
+(define-constant max-market-id u1000000) ;; Maximum market ID
 
 ;; Define error constants in uppercase
 (define-constant ERROR_UNAUTHORIZED (err u100))
@@ -13,6 +14,10 @@
 (define-constant ERROR_INSUFFICIENT_BALANCE (err u104))
 (define-constant ERROR_MARKET_CANCELLED (err u105))
 (define-constant ERROR_INVALID_OPTION (err u106))
+(define-constant ERROR_INVALID_MARKET_ID (err u107))
+(define-constant ERROR_INVALID_END_BLOCK (err u108))
+(define-constant ERROR_INVALID_QUESTION (err u109))
+(define-constant ERROR_INVALID_DESCRIPTION (err u110))
 
 ;; Define data maps
 (define-map market-registry
@@ -44,6 +49,24 @@
 
 ;; Define variables
 (define-data-var market-counter uint u0)
+
+;; Helper functions
+
+(define-private (is-valid-market-id (id uint))
+  (and (> id u0) (<= id max-market-id))
+)
+
+(define-private (is-valid-string (str (string-ascii 256)))
+  (> (len str) u0)
+)
+
+(define-private (is-valid-description (desc (string-ascii 1024)))
+  (> (len desc) u0)
+)
+
+(define-private (is-valid-end-block (end-block uint))
+  (> end-block block-height)
+)
 
 ;; Custom maximum function
 (define-private (find-maximum (first-number uint) (second-number uint))
@@ -94,6 +117,9 @@
       (initial-stake-totals (list u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0))
     )
     (asserts! (> number-of-options u1) ERROR_INVALID_OPTION)
+    (asserts! (is-valid-string market-question) ERROR_INVALID_QUESTION)
+    (asserts! (is-valid-description market-description) ERROR_INVALID_DESCRIPTION)
+    (asserts! (is-valid-end-block market-end-block) ERROR_INVALID_END_BLOCK)
     (map-set market-registry
       { market-id: market-id }
       {
@@ -121,11 +147,12 @@
 (define-public (place-market-stake (market-id uint) (selected-option-index uint) (stake-amount uint))
   (let
     (
-      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) (err u404)))
-      (market-option-data (unwrap! (map-get? market-options { market-id: market-id }) (err u404)))
+      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) ERROR_INVALID_MARKET_ID))
+      (market-option-data (unwrap! (map-get? market-options { market-id: market-id }) ERROR_INVALID_MARKET_ID))
       (existing-stake-data (default-to { stake-distribution: (list u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0 u0) } 
         (map-get? participant-stakes { market-id: market-id, staker-address: tx-sender })))
     )
+    (asserts! (is-valid-market-id market-id) ERROR_INVALID_MARKET_ID)
     (asserts! (not (get market-is-resolved market-data)) ERROR_MARKET_ALREADY_RESOLVED)
     (asserts! (not (get market-is-cancelled market-data)) ERROR_MARKET_CANCELLED)
     (asserts! (>= stake-amount minimum-stake-amount) ERROR_INVALID_STAKE_AMOUNT)
@@ -159,9 +186,10 @@
 (define-public (resolve-prediction-market (market-id uint) (winning-option-index uint))
   (let
     (
-      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) (err u404)))
-      (market-option-data (unwrap! (map-get? market-options { market-id: market-id }) (err u404)))
+      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) ERROR_INVALID_MARKET_ID))
+      (market-option-data (unwrap! (map-get? market-options { market-id: market-id }) ERROR_INVALID_MARKET_ID))
     )
+    (asserts! (is-valid-market-id market-id) ERROR_INVALID_MARKET_ID)
     (asserts! (is-eq tx-sender contract-administrator) ERROR_UNAUTHORIZED)
     (asserts! (not (get market-is-resolved market-data)) ERROR_MARKET_ALREADY_RESOLVED)
     (asserts! (not (get market-is-cancelled market-data)) ERROR_MARKET_CANCELLED)
@@ -182,8 +210,9 @@
 (define-public (cancel-prediction-market (market-id uint))
   (let
     (
-      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) (err u404)))
+      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) ERROR_INVALID_MARKET_ID))
     )
+    (asserts! (is-valid-market-id market-id) ERROR_INVALID_MARKET_ID)
     (asserts! (is-eq tx-sender contract-administrator) ERROR_UNAUTHORIZED)
     (asserts! (not (get market-is-resolved market-data)) ERROR_MARKET_ALREADY_RESOLVED)
     (asserts! (not (get market-is-cancelled market-data)) ERROR_MARKET_CANCELLED)
@@ -201,9 +230,10 @@
 (define-public (withdraw-partial-stake (market-id uint) (option-index uint) (withdrawal-amount uint))
   (let
     (
-      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) (err u404)))
-      (participant-stake-data (unwrap! (map-get? participant-stakes { market-id: market-id, staker-address: tx-sender }) (err u404)))
+      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) ERROR_INVALID_MARKET_ID))
+      (participant-stake-data (unwrap! (map-get? participant-stakes { market-id: market-id, staker-address: tx-sender }) ERROR_INVALID_MARKET_ID))
     )
+    (asserts! (is-valid-market-id market-id) ERROR_INVALID_MARKET_ID)
     (asserts! (not (get market-is-resolved market-data)) ERROR_MARKET_ALREADY_RESOLVED)
     (asserts! (not (get market-is-cancelled market-data)) ERROR_MARKET_CANCELLED)
     (asserts! (< option-index (len (get stake-distribution participant-stake-data))) ERROR_INVALID_OPTION)
@@ -239,9 +269,10 @@
 (define-public (claim-rewards-or-refund (market-id uint))
   (let
     (
-      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) (err u404)))
-      (participant-stake-data (unwrap! (map-get? participant-stakes { market-id: market-id, staker-address: tx-sender }) (err u404)))
+      (market-data (unwrap! (map-get? market-registry { market-id: market-id }) ERROR_INVALID_MARKET_ID))
+      (participant-stake-data (unwrap! (map-get? participant-stakes { market-id: market-id, staker-address: tx-sender }) ERROR_INVALID_MARKET_ID))
     )
+    (asserts! (is-valid-market-id market-id) ERROR_INVALID_MARKET_ID)
     (asserts! (or (get market-is-resolved market-data) (get market-is-cancelled market-data)) ERROR_MARKET_NOT_RESOLVED)
     
     (if (get market-is-cancelled market-data)
